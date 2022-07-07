@@ -23,7 +23,7 @@ import (
 var (
 	DbgMode         = false
 	DisableLinearAc = false
-	ChunkSize       = 1024 * 32
+	ChunkSize       = 1024 * 32 // 32 KB
 )
 
 // Chunk
@@ -32,7 +32,7 @@ type chunk []byte
 
 var chunkPool = syncPool{
 	New: func() interface{} {
-		ck := make(chunk, 0, ChunkSize)
+		ck := make(chunk, 0, ChunkSize)	// 32 KB
 		return &ck
 	},
 }
@@ -141,16 +141,21 @@ func (ac *Allocator) reset() {
 }
 
 func (ac *Allocator) New(ptrToPtr interface{}) {
+	// ???
 	tmp := noEscape(ptrToPtr)
 
+	// ???
 	if ac.disabled {
 		tp := reflect.TypeOf(tmp).Elem().Elem()
 		reflect.ValueOf(tmp).Elem().Set(reflect.New(tp))
 		return
 	}
 
+	//
 	tp := reflect.TypeOf(tmp).Elem()
+
 	v := ac.typedNew(tp, true)
+
 	reflect.ValueOf(tmp).Elem().Set(reflect.ValueOf(v))
 }
 
@@ -173,25 +178,47 @@ func (ac *Allocator) NewCopy(ptr interface{}) (ret interface{}) {
 }
 
 func (ac *Allocator) typedNew(ptrTp reflect.Type, zero bool) (ret interface{}) {
+	// 取 ptr *T 的 T
 	objType := ptrTp.Elem()
+
+	// 分配内存，返回指针
 	ptr := ac.alloc(int(objType.Size()), zero)
-	*(*emptyInterface)(unsafe.Pointer(&ret)) = emptyInterface{data(ptrTp), ptr}
+
+	// 构造返回值
+	result := emptyInterface{data(ptrTp), ptr}
+
+	// 赋值给返回值
+	*(*emptyInterface)(unsafe.Pointer(&ret)) = result
+
+	// 调试模式
 	if DbgMode {
 		if objType.Kind() == reflect.Struct {
 			ac.scanObjs = append(ac.scanObjs, ret)
 		}
 	}
+
 	return
 }
 
 func (ac *Allocator) alloc(need int, zero bool) unsafe.Pointer {
+
+	// 初始化
 	if len(ac.chunks) == 0 {
 		ac.chunks = append(ac.chunks, chunkPool.get().(*chunk))
 	}
+
 start:
+
+	// 取当前 chunk (32KB)
 	cur := ac.chunks[ac.curChunk]
+
+	// 已使用字节数
 	used := len(*cur)
+
+	// 当前块空间不足
 	if used+need > cap(*cur) {
+
+		// 如果是最后一块，就直接新加一块
 		if ac.curChunk == len(ac.chunks)-1 {
 			var ck *chunk
 			if need > ChunkSize {
@@ -201,26 +228,37 @@ start:
 				ck = chunkPool.get().(*chunk)
 			}
 			ac.chunks = append(ac.chunks, ck)
+		// 如果不是最后一块，且下一块也无法满足，就新加一块，同时移除旧的下一块
 		} else if cap(*ac.chunks[ac.curChunk+1]) < need {
 			chunkPool.put(ac.chunks[ac.curChunk+1])
 			ck := make(chunk, 0, need)
 			ac.chunks[ac.curChunk+1] = &ck
 		}
+
+		// 块技数 +1
 		ac.curChunk++
 		goto start
 	}
+
+	// 占用内存
 	*cur = (*cur)[:used+need]
+
+	// 构造指针
 	ptr := add((*sliceHeader)(unsafe.Pointer(cur)).Data, used)
+
 	if zero {
 		clearBytes(ptr, need)
 	}
+
 	return ptr
 }
 
 func (ac *Allocator) NewString(v string) string {
+
 	if ac.disabled {
 		return v
 	}
+
 	h := (*stringHeader)(unsafe.Pointer(&v))
 	ptr := ac.alloc(h.Len, false)
 	copyBytes(h.Data, ptr, h.Len)
@@ -253,14 +291,22 @@ func (ac *Allocator) NewSlice(slicePtr interface{}, len, cap int) {
 	}
 
 	slicePtrType := reflect.TypeOf(slicePtrTmp)
+
+	// 必须是 ptr *[]T 类型
 	if slicePtrType.Kind() != reflect.Ptr || slicePtrType.Elem().Kind() != reflect.Slice {
 		panic("need a pointer to slice")
 	}
 
+	// *[]T 等价于 *sliceHeader
 	slice := (*sliceHeader)(data(slicePtrTmp))
 	if cap < len {
 		cap = len
 	}
+
+	// slicePtrType.Elem():  *[]T => []T
+	// slicePtrType.Elem().Elem():  []T => T
+	//
+	// 分配 cap * sizeof(elem) 的底层空间，返回指针
 	slice.Data = ac.alloc(cap*int(slicePtrType.Elem().Elem().Size()), false)
 	slice.Len = len
 	slice.Cap = cap
@@ -402,18 +448,26 @@ func (ac *Allocator) CheckExternalPointers() {
 }
 
 func (ac *Allocator) checkRecursively(val reflect.Value, checked map[interface{}]struct{}, invalidatePointers bool) error {
+
 	if val.Kind() == reflect.Ptr {
+
 		if val.Pointer() != trickyAddress && !val.IsNil() {
+
+			// 是否为内部指针
 			if !ac.internalPointer(val.Pointer()) {
 				return fmt.Errorf("unexpected external pointer: %+v", val)
 			}
+
+			// 是否为结构体指针
 			if val.Elem().Type().Kind() == reflect.Struct {
 				if err := ac.checkRecursively(val.Elem(), checked, invalidatePointers); err != nil {
 					return err
 				}
 				checked[val.Interface()] = struct{}{}
 			}
+
 		}
+
 		return nil
 	}
 

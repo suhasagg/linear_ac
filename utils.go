@@ -98,11 +98,35 @@ func forceStackSplit(i int) int {
 	return i
 }
 
+// [重要]
+//
+// 接口 interface 本质上是一个结构体，内有两个指针：
+//
+//	type iface struct{
+//     tab *itab 			// 接口信息、存放实际类型信息、方法信息
+//     data unsafe.Pointer 	// 实际数据的地址
+//	}
+//
+// 学过 C 语言有指针的基本知识是很容易理解的，接口 iface 与 [2]unsafe.Pointer 在内存模型上是等价：
+//
+//	var a = 1
+//	var x interface{} = a
+//
+// 取接口变量 x 的地址，强转为长度为 2 的指针数组的指针，取下标是 1 的元素即第 2 个值，
+// 就是取到上面的 data 的值，data 的值是接口实际数据的地址，然后根据 tab 里的数据实际类型可以拿到实际存放的对象。
+//
+//	p := (*[2]unsafe.Pointer)(unsafe.Pointer(&x))[1]
+//	pi := (*int) (p)
+//	fmt.Println(*pi,a)  //结果： 1 1
+
+
 //go:noinline
 //go:nosplit
 func noEscape(p interface{}) (ret interface{}) {
+	// 将 iface 转换成 []uintptr
 	r := *(*[2]uintptr)(unsafe.Pointer(&p))
-	//forceStackSplit(1000)
+	// forceStackSplit(1000)
+	// 将 ret 转换成 []uintptr ，然后赋值
 	*(*[2]uintptr)(unsafe.Pointer(&ret)) = r
 	return
 }
