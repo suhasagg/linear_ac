@@ -276,12 +276,20 @@ func (ac *Allocator) NewMap(mapPtr interface{}) {
 		return
 	}
 
+
 	m := reflect.MakeMap(reflect.TypeOf(mapPtrTemp).Elem())
 	reflect.ValueOf(mapPtrTemp).Elem().Set(m)
+
+	//
 	ac.maps[data(m.Interface())] = struct{}{}
 }
 
 func (ac *Allocator) NewSlice(slicePtr interface{}, len, cap int) {
+
+	// slicePtrTmp 和 slicePtr 底层指向同一块内存，
+	// 这块内存指向一个 sliceHeader{} 数据，
+	//
+	// 通过 slicePtrTmp 修改 sliceHeader{} ，间接实现了创建/拷贝/修改 slice 的操作。
 	slicePtrTmp := noEscape(slicePtr)
 
 	if ac.disabled {
@@ -320,9 +328,11 @@ func (ac *Allocator) CopySlice(slice interface{}) (ret interface{}) {
 	}
 
 	sliceType := reflect.TypeOf(sliceTmp)
+
 	if sliceType.Kind() != reflect.Slice {
 		panic("need a slice")
 	}
+
 	elemType := sliceType.Elem()
 	switch elemType.Kind() {
 	case reflect.Int, reflect.Int32, reflect.Int64,
